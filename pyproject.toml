@@ -1,0 +1,49 @@
+[tool.poetry]
+name = "intalyzer"
+version = "0.1.0"
+description = "A static analysis tool for Arduino (.ino) files to detect potential race conditions in interrupt-driven code"
+authors = ["Ioane Kapanadze <ioane20002@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.7"
+clang = "^14.0.0"
+libclang = "^14.0.0"
+typing-extensions = "^4.0.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.0.0"
+ruff = "^0.3.7"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+intalyzer = "intalyzer:main" 
+
+[tool.ruff]
+exclude = [
+    ".venv",
+]
+line-length = 100
+ignore = [
+    "D100",
+    "D104",
+    "D105",
+    "D106",
+    "D107",
+    "D200",
+    "D203",
+    "D212",
+    "D301",
+    "D401",
+    "D415",
+    "E501",
+]
+select = [
+    "D",
+    "E",
+    "F",
+    "W",
+]
