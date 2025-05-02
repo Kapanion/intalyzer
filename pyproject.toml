@@ -6,9 +6,10 @@ authors = ["Ioane Kapanadze <ioane20002@gmail.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.7"
+python = "^3.8"
 clang = "^14.0.0"
 libclang = "^14.0.0"
+requests = "^2.32.3"
 typing-extensions = "^4.0.0"
 
 [tool.poetry.group.dev.dependencies]
@@ -27,7 +28,7 @@ exclude = [
     ".venv",
 ]
 line-length = 100
-ignore = [
+lint.ignore = [
     "D100",
     "D104",
     "D105",
@@ -41,7 +42,7 @@ ignore = [
     "D415",
     "E501",
 ]
-select = [
+lint.select = [
     "D",
     "E",
     "F",

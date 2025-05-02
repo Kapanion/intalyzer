@@ -1,3 +1,8 @@
+# Project specific
+ino_files_dataset/
+ino_files_dataset.zip
+temp.json
+
 # Build artifacts
 build/
 *.o
