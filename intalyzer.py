@@ -364,7 +364,10 @@ void loop();
         for node in cursor.get_children():
             if node.kind == CursorKind.FUNCTION_DECL:
                 func_name = node.spelling
-                if func_name in ['setup', 'loop'] and func_name not in self.main_program.functions_analyzed:
+                if (
+                    func_name in ["setup", "loop"]
+                    and func_name not in self.main_program.functions_analyzed
+                ):
                     if self.verbose:
                         logging.info(f"Analyzing main program function: {func_name}")
                     self.main_program.functions_analyzed.add(func_name)
@@ -410,20 +413,14 @@ void loop();
             # Check for race conditions where interrupt writes variables that main program reads/writes
             for var in isr.writes:
                 if var in self.main_program.reads:
-                    self.race_conditions.append(
-                        (var, isr.name, "main program", "read")
-                    )
+                    self.race_conditions.append((var, isr.name, "main program", "read"))
                 if var in self.main_program.writes:
-                    self.race_conditions.append(
-                        (var, isr.name, "main program", "write")
-                    )
+                    self.race_conditions.append((var, isr.name, "main program", "write"))
 
             # Check for race conditions where main program writes variables that interrupt reads
             for var in self.main_program.writes:
                 if var in isr.reads:
-                    self.race_conditions.append(
-                        (var, "main program", isr.name, "read")
-                    )
+                    self.race_conditions.append((var, "main program", isr.name, "read"))
 
     def report_results(self):
         """Report the analysis results."""
