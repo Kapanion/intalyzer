@@ -10,6 +10,10 @@ app = typer.Typer(help="Analyze Arduino code for interrupt-related race conditio
 
 def setup_logging(verbose: int = 0):
     """Set up logging based on verbosity level."""
+    # Remove all existing handlers
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+
     if verbose == 1:
         logging.basicConfig(level=logging.INFO)
     elif verbose >= 2:
@@ -18,11 +22,14 @@ def setup_logging(verbose: int = 0):
         logging.basicConfig(level=logging.WARNING)
 
 
-def ensure_results_dir():
-    """Ensure the results directory exists."""
-    results_dir = Path("results")
-    results_dir.mkdir(exist_ok=True)
-    return results_dir
+def ensure_dir_exists(path: Path) -> Path:
+    """Ensure the directory exists, creating it if necessary."""
+    path = Path(path)
+    if path.suffix:  # If it's a file path
+        path.parent.mkdir(parents=True, exist_ok=True)
+    else:  # If it's a directory path
+        path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 @app.command()
@@ -48,7 +55,7 @@ def analyze(
 def batch_analyze(
     directory: Path = typer.Argument(..., help="Directory containing .ino files"),
     output: Path = typer.Option(
-        "result.json", "-o", "--output", help="Output JSON file for analysis results"
+        "results/result.json", "-o", "--output", help="Output JSON file for analysis results"
     ),
     verbose: int = typer.Option(
         0,
@@ -62,9 +69,8 @@ def batch_analyze(
     Analyze multiple Arduino .ino files in a directory for race conditions.
     """
     setup_logging(verbose)
-    results_dir = ensure_results_dir()
-    output_path = results_dir / output
-    batch_analyzer = BatchAnalyzer(str(directory), str(output_path))
+    output = ensure_dir_exists(output)
+    batch_analyzer = BatchAnalyzer(str(directory), str(output))
     batch_analyzer.run_analysis()
 
 
@@ -73,10 +79,12 @@ def visualize(
     json_file: Path = typer.Option(
         "results/result.json", "-i", "--input", help="JSON file containing analysis results"
     ),
-    output_image: Path = typer.Option(
-        "race_conditions_summary.png", help="Output image file for visualization"
+    output_dir: Path = typer.Option(
+        "results/visualizations", help="Directory to save visualization plots"
     ),
-    report: Path = typer.Option(None, help="Output report file (optional)"),
+    report: Path = typer.Option(
+        "results/race_conditions_report.md", help="Output report file (optional)"
+    ),
     dark_mode: bool = typer.Option(False, "--dark-mode", help="Use dark mode styling for plots"),
     verbose: int = typer.Option(
         0,
@@ -90,13 +98,14 @@ def visualize(
     Generate visualizations and reports from analysis results.
     """
     setup_logging(verbose)
-    results_dir = ensure_results_dir()
-    output_image_path = results_dir / output_image
-    report_path = results_dir / (report if report else "race_conditions_report.md")
+
+    # Ensure all output directories exist
+    output_dir = ensure_dir_exists(output_dir)
+    report = ensure_dir_exists(report)
 
     visualizer = Visualizer(str(json_file), dark_mode=dark_mode)
-    visualizer.plot_race_condition_summary(str(output_image_path))
-    visualizer.generate_report(str(report_path))
+    visualizer.plot_race_condition_summary(str(output_dir))
+    visualizer.generate_report(str(report))
 
 
 def main():  # noqa: D103

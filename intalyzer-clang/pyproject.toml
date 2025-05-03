@@ -32,7 +32,7 @@ exclude = [
     ".venv",
 ]
 line-length = 100
-lint.ignore = [
+ignore = [
     "D100",
     "D104",
     "D105",
@@ -44,9 +44,10 @@ lint.ignore = [
     "D301",
     "D401",
     "D415",
+    "D417",
     "E501",
 ]
-lint.select = [
+select = [
     "D",
     "E",
     "F",
