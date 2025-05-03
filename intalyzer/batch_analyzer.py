@@ -79,18 +79,18 @@ class BatchAnalyzer:
     def run_analysis(self):
         """Run analysis on all .ino files and save results to JSON."""
         ino_files = self.find_ino_files()
-        print(f"Found {len(ino_files)} .ino files to analyze")
+        logging.info(f"Found {len(ino_files)} .ino files to analyze")
 
         for i, file_path in enumerate(ino_files, 1):
-            print(f"Analyzing file {i}/{len(ino_files)}: {file_path}")
+            logging.info(f"Analyzing file {i}/{len(ino_files)}: {file_path}")
             try:
                 file_results = self.analyze_file(file_path)
                 self.results.append(file_results)
             except Exception as e:
-                print(f"Error analyzing {file_path}: {str(e)}")
+                logging.error(f"Error analyzing {file_path}: {str(e)}")
                 self.results.append({"file": str(file_path), "error": str(e)})
 
         # Save results to JSON
         with open(self.output_file, "w") as f:
             json.dump(self.results, f, indent=2)
-        print(f"Analysis complete. Results saved to {self.output_file}")
+        logging.info(f"Analysis complete. Results saved to {self.output_file}")
