@@ -105,14 +105,16 @@ class Visualizer:
         )
         plt.close()
 
-    def plot_race_condition_summary(self, output_file: str):
+    def plot_race_condition_summary(self, output_dir: str):
         """Create a summary plot showing race condition statistics."""
         stats = self._get_race_condition_stats()
 
-        # Create base filename for individual plots
-        base_output = Path(output_file)
-        base_name = base_output.stem
-        output_dir = base_output.parent
+        # Create output directory if it doesn't exist
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Use constant base name for output files
+        base_name = "race_condition_summary"
 
         # Calculate pie chart data
         no_race_conditions = (
