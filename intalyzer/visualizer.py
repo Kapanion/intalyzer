@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List
 import matplotlib.pyplot as plt
 import seaborn as sns
 from collections import defaultdict
@@ -71,6 +71,40 @@ class Visualizer:
 
         return stats
 
+    def _plot_histogram(
+        self, data: List[int], title: str, xlabel: str, ylabel: str, output_path: Path
+    ):
+        """
+        Helper function to create and save a histogram plot.
+
+        Args:
+        ----
+            data: List of values to plot
+            title: Plot title
+            xlabel: X-axis label
+            ylabel: Y-axis label
+            output_path: Path to save the plot
+
+        """
+        if not data:
+            return
+
+        plt.figure(figsize=(8, 6))
+        sns.histplot(data, discrete=True)
+        plt.title(title, color=self.text_color)
+        plt.xlabel(xlabel, color=self.text_color)
+        plt.ylabel(ylabel, color=self.text_color)
+        plt.gca().xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+        plt.gca().yaxis.set_major_locator(plt.MaxNLocator(integer=True))
+        plt.gca().tick_params(colors=self.text_color)
+        plt.tight_layout()
+        plt.savefig(
+            output_path,
+            facecolor="black" if self.dark_mode else "white",
+            bbox_inches="tight",
+        )
+        plt.close()
+
     def plot_race_condition_summary(self, output_file: str):
         """Create a summary plot showing race condition statistics."""
         stats = self._get_race_condition_stats()
@@ -101,60 +135,33 @@ class Visualizer:
             if "error" not in result:
                 race_conditions_per_file.append(len(result["race_conditions"]))
 
-        plt.figure(figsize=(8, 6))
-        if race_conditions_per_file:
-            sns.histplot(race_conditions_per_file, discrete=True)
-            plt.title("Race Conditions per File", color=self.text_color)
-            plt.xlabel("Number of Race Conditions", color=self.text_color)
-            plt.ylabel("Number of Files", color=self.text_color)
-            plt.gca().xaxis.set_major_locator(plt.MaxNLocator(integer=True))
-            plt.gca().yaxis.set_major_locator(plt.MaxNLocator(integer=True))
-            plt.gca().tick_params(colors=self.text_color)
-            plt.tight_layout()
-            plt.savefig(
-                output_dir / f"{base_name}_per_file.png",
-                facecolor="black" if self.dark_mode else "white",
-                bbox_inches="tight",
-            )
-            plt.close()
+        self._plot_histogram(
+            race_conditions_per_file,
+            "Race Conditions per File",
+            "Number of Race Conditions",
+            "Number of Files",
+            output_dir / f"{base_name}_per_file.png",
+        )
 
         # Plot 2: Distribution of race conditions per interrupt
         race_conditions_per_interrupt = list(stats["race_conditions_by_interrupt"].values())
-        plt.figure(figsize=(8, 6))
-        if race_conditions_per_interrupt:
-            sns.histplot(race_conditions_per_interrupt, discrete=True)
-            plt.title("Race Conditions per Interrupt", color=self.text_color)
-            plt.xlabel("Number of Race Conditions", color=self.text_color)
-            plt.ylabel("Number of Interrupts", color=self.text_color)
-            plt.gca().xaxis.set_major_locator(plt.MaxNLocator(integer=True))
-            plt.gca().yaxis.set_major_locator(plt.MaxNLocator(integer=True))
-            plt.gca().tick_params(colors=self.text_color)
-            plt.tight_layout()
-            plt.savefig(
-                output_dir / f"{base_name}_per_interrupt.png",
-                facecolor="black" if self.dark_mode else "white",
-                bbox_inches="tight",
-            )
-            plt.close()
+        self._plot_histogram(
+            race_conditions_per_interrupt,
+            "Race Conditions per Interrupt",
+            "Number of Race Conditions",
+            "Number of Interrupts",
+            output_dir / f"{base_name}_per_interrupt.png",
+        )
 
         # Plot 3: Distribution of race conditions per variable
         race_conditions_per_variable = list(stats["race_conditions_by_variable"].values())
-        plt.figure(figsize=(8, 6))
-        if race_conditions_per_variable:
-            sns.histplot(race_conditions_per_variable, discrete=True)
-            plt.title("Race Conditions per Variable", color=self.text_color)
-            plt.xlabel("Number of Race Conditions", color=self.text_color)
-            plt.ylabel("Number of Variables", color=self.text_color)
-            plt.gca().xaxis.set_major_locator(plt.MaxNLocator(integer=True))
-            plt.gca().yaxis.set_major_locator(plt.MaxNLocator(integer=True))
-            plt.gca().tick_params(colors=self.text_color)
-            plt.tight_layout()
-            plt.savefig(
-                output_dir / f"{base_name}_per_variable.png",
-                facecolor="black" if self.dark_mode else "white",
-                bbox_inches="tight",
-            )
-            plt.close()
+        self._plot_histogram(
+            race_conditions_per_variable,
+            "Race Conditions per Variable",
+            "Number of Race Conditions",
+            "Number of Variables",
+            output_dir / f"{base_name}_per_variable.png",
+        )
 
         # Plot 4: Pie chart of files by race condition count
         plt.figure(figsize=(8, 6))

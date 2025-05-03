@@ -1,8 +1,12 @@
 import json
+import logging
 from pathlib import Path
 from typing import List, Dict, Any
 from intalyzer.analyzer import RaceConditionAnalyzer
 from intalyzer.models import AccessType
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
 class BatchAnalyzer:
