@@ -22,10 +22,22 @@ class AccessInfo:
     protected: bool = False
 
     def __post_init__(self):
-        object.__setattr__(self, "line_number", self.line_number -(ARDUINO_WRAPPER_LINES))
+        object.__setattr__(self, "line_number", self.line_number - ARDUINO_WRAPPER_LINES)
 
     def __str__(self) -> str:
         return f"Line {self.line_number}: {self.access_type} of '{self.var_name}' in '{self.statement}'"
+
+    def __eq__(self, other):
+        if not isinstance(other, AccessInfo):
+            return NotImplemented
+        return (
+            self.line_number == other.line_number
+            and self.var_name == other.var_name
+            and self.access_type == other.access_type
+        )
+
+    def __hash__(self):
+        return hash((self.line_number, self.var_name, self.access_type))
 
 
 @dataclass(frozen=True)
@@ -34,12 +46,24 @@ class ReadAccessInfo(AccessInfo):
 
     access_type: Literal[AccessType.READ] = AccessType.READ
 
+    def __eq__(self, other):
+        return super().__eq__(other)
+
+    def __hash__(self):
+        return super().__hash__()
+
 
 @dataclass(frozen=True)
 class WriteAccessInfo(AccessInfo):
     """Information about a global variable write access."""
 
     access_type: Literal[AccessType.WRITE] = AccessType.WRITE
+
+    def __eq__(self, other):
+        return super().__eq__(other)
+
+    def __hash__(self):
+        return super().__hash__()
 
 
 @dataclass
@@ -103,8 +127,8 @@ class RaceCondition:
 
     var_name: str
     interrupt_name: str
-    main_program_accesses: List[AccessInfo]
-    interrupt_accesses: List[AccessInfo]
+    main_program_accesses: Set[AccessInfo]
+    interrupt_accesses: Set[AccessInfo]
 
     def __str__(self) -> str:
         main_program_access_str = ", ".join([str(access) for access in self.main_program_accesses])

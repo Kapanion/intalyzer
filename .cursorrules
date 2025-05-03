@@ -2,5 +2,11 @@
     "dependencyManager": "poetry",
     "python": {
         "interpreter": "python3"
+    },
+    "commands": {
+        "help": {
+            "command": "intalyzer --help",
+            "description": "Show help information for the Intalyzer program"
+        }
     }
 } 

@@ -129,8 +129,48 @@ class RaceConditionAnalyzer:
 
     def _process_statements(self, node, info):
         """Process statements to find variable reads and writes."""
+        logging.debug(f"Processing statement node: {node.kind} {node.spelling}")
+
+        # If this is a compound statement, check all tokens for global variable references
+        if node.kind == CursorKind.COMPOUND_STMT:
+            tokens = list(node.get_tokens())
+            logging.debug(f"Statement tokens: {[t.spelling for t in tokens]}")
+
+            # Check all tokens for global variable references
+            for token in tokens:
+                if token.spelling in self.global_vars:
+                    var_name = token.spelling
+                    logging.debug(f"Found global variable {var_name} in compound statement")
+                    line_number = token.location.line
+
+                    # Find the statement containing this variable
+                    statement = ""
+                    current = node
+                    while current and current.kind != CursorKind.TRANSLATION_UNIT:
+                        if (
+                            current.kind == CursorKind.BINARY_OPERATOR
+                            or current.kind == CursorKind.UNARY_OPERATOR
+                            or current.kind == CursorKind.CALL_EXPR
+                            or current.kind == CursorKind.MEMBER_REF_EXPR
+                        ):
+                            statement = "".join(t.spelling for t in current.get_tokens())
+                            break
+                        current = current.semantic_parent
+
+                    # Always add read access for variable references
+                    info.reads.add(
+                        ReadAccessInfo(
+                            line_number=line_number,
+                            statement=statement,
+                            var_name=var_name,
+                        )
+                    )
+                    logging.debug(f"Added read of {var_name} in compound statement")
+
         for child in node.get_children():
             logging.debug(f"Processing node: {child.kind} {child.spelling}")
+            logging.debug(f"Node tokens: {[t.spelling for t in child.get_tokens()]}")
+
             if child.kind == CursorKind.BINARY_OPERATOR:
                 logging.debug(f"Binary operator tokens: {[t.spelling for t in child.get_tokens()]}")
                 # Check if this is an assignment
@@ -149,7 +189,45 @@ class RaceConditionAnalyzer:
                                     var_name=left_var,
                                 )
                             )
+                            # Also add read access for the variable being written to
+                            info.reads.add(
+                                ReadAccessInfo(
+                                    line_number=child.location.line,
+                                    statement="".join(t.spelling for t in tokens),
+                                    var_name=left_var,
+                                )
+                            )
                         break
+
+            elif child.kind == CursorKind.UNARY_OPERATOR:
+                # Check if this is an increment/decrement operation
+                tokens = list(child.get_tokens())
+                logging.debug(f"Unary operator tokens: {[t.spelling for t in tokens]}")
+
+                # Look for ++ or -- operators
+                if len(tokens) == 2 and (tokens[1].spelling == "++" or tokens[1].spelling == "--"):
+                    var_name = tokens[0].spelling
+                    if var_name in self.global_vars:
+                        logging.debug(f"Found increment/decrement of global variable: {var_name}")
+                        statement = "".join(t.spelling for t in tokens)
+                        line_number = child.location.line
+
+                        # Add both read and write accesses
+                        info.reads.add(
+                            ReadAccessInfo(
+                                line_number=line_number,
+                                statement=statement,
+                                var_name=var_name,
+                            )
+                        )
+                        info.writes.add(
+                            WriteAccessInfo(
+                                line_number=line_number,
+                                statement=statement,
+                                var_name=var_name,
+                            )
+                        )
+                        logging.debug(f"Added read and write of {var_name} for increment/decrement")
 
             elif child.kind == CursorKind.DECL_REF_EXPR:
                 var_name = child.spelling
@@ -161,47 +239,61 @@ class RaceConditionAnalyzer:
                     # Get the full statement text
                     statement = ""
                     current = child
-                    while current and current.kind != CursorKind.COMPOUND_STMT:
+                    while current and current.kind != CursorKind.TRANSLATION_UNIT:
                         if (
                             current.kind == CursorKind.BINARY_OPERATOR
                             or current.kind == CursorKind.UNARY_OPERATOR
-                            or current.kind == CursorKind.CALL_EXPR  # Add check for function calls
+                            or current.kind == CursorKind.CALL_EXPR
+                            or current.kind == CursorKind.MEMBER_REF_EXPR
                         ):
                             statement = "".join(t.spelling for t in current.get_tokens())
                             break
                         current = current.semantic_parent
 
-                    # Add as a read if we haven't already identified it as a write
-                    if not any(
-                        w.var_name == var_name and w.line_number == line_number for w in info.writes
-                    ):
-                        info.reads.add(
-                            ReadAccessInfo(
-                                line_number=line_number,
-                                statement=statement,
-                                var_name=var_name,
-                            )
+                    # If we didn't find a statement, look for a parent call expression
+                    if not statement:
+                        current = child
+                        while current and current.kind != CursorKind.TRANSLATION_UNIT:
+                            if current.kind == CursorKind.CALL_EXPR:
+                                statement = "".join(t.spelling for t in current.get_tokens())
+                                break
+                            current = current.semantic_parent
+
+                    # Always add read access for variable references
+                    info.reads.add(
+                        ReadAccessInfo(
+                            line_number=line_number,
+                            statement=statement,
+                            var_name=var_name,
                         )
-                        logging.debug(f"Added read of {var_name}")
+                    )
+                    logging.debug(f"Added read of {var_name}")
 
-            # Add detection of function arguments
             elif child.kind == CursorKind.CALL_EXPR:
-                # Process each argument in the function call
-                for arg in child.get_children():
-                    if arg.kind == CursorKind.DECL_REF_EXPR:
-                        var_name = arg.spelling
-                        if var_name in self.global_vars:
-                            logging.debug(
-                                f"Found global variable {var_name} passed as function argument"
-                            )
-                            line_number = arg.location.line
-                            statement = "".join(t.spelling for t in child.get_tokens())
+                # Process function call arguments and nested expressions
+                self._process_function_call(child, info)
 
-                            # Add as a read if we haven't already identified it as a write
-                            if not any(
-                                w.var_name == var_name and w.line_number == line_number
-                                for w in info.writes
-                            ):
+            elif child.kind == CursorKind.MEMBER_REF_EXPR:
+                # Process member references (e.g., Serial.print)
+                tokens = list(child.get_tokens())
+                logging.debug(f"Member reference tokens: {[t.spelling for t in tokens]}")
+
+                # Get the parent call expression
+                parent = child.semantic_parent
+                if parent and parent.kind == CursorKind.CALL_EXPR:
+                    statement = "".join(t.spelling for t in parent.get_tokens())
+                    logging.debug(f"Parent call expression: {statement}")
+
+                    # Process any global variables in the arguments
+                    for arg in parent.get_children():
+                        if arg.kind == CursorKind.DECL_REF_EXPR:
+                            var_name = arg.spelling
+                            if var_name in self.global_vars:
+                                logging.debug(
+                                    f"Found global variable {var_name} in member reference call"
+                                )
+                                line_number = arg.location.line
+                                # Always add read access for variable references
                                 info.reads.add(
                                     ReadAccessInfo(
                                         line_number=line_number,
@@ -209,9 +301,163 @@ class RaceConditionAnalyzer:
                                         var_name=var_name,
                                     )
                                 )
-                                logging.debug(f"Added read of {var_name} as function argument")
+                                logging.debug(f"Added read of {var_name} in member reference call")
+
+            elif child.kind == CursorKind.UNEXPOSED_EXPR:
+                # Process unexposed expressions at the top level
+                tokens = list(child.get_tokens())
+                logging.debug(f"Processing unexposed expression: {[t.spelling for t in tokens]}")
+
+                # Check all tokens for global variable references
+                for token in tokens:
+                    if token.spelling in self.global_vars:
+                        var_name = token.spelling
+                        logging.debug(f"Found global variable {var_name} in unexposed expression")
+                        line_number = token.location.line
+
+                        # Find the statement containing this variable
+                        statement = ""
+                        current = child
+                        while current and current.kind != CursorKind.TRANSLATION_UNIT:
+                            if (
+                                current.kind == CursorKind.BINARY_OPERATOR
+                                or current.kind == CursorKind.UNARY_OPERATOR
+                                or current.kind == CursorKind.CALL_EXPR
+                                or current.kind == CursorKind.MEMBER_REF_EXPR
+                            ):
+                                statement = "".join(t.spelling for t in current.get_tokens())
+                                break
+                            current = current.semantic_parent
+
+                        # If we didn't find a statement, look for a parent call expression
+                        if not statement:
+                            current = child
+                            while current and current.kind != CursorKind.TRANSLATION_UNIT:
+                                if current.kind == CursorKind.CALL_EXPR:
+                                    statement = "".join(t.spelling for t in current.get_tokens())
+                                    break
+                                current = current.semantic_parent
+
+                        # Always add read access for variable references
+                        info.reads.add(
+                            ReadAccessInfo(
+                                line_number=line_number,
+                                statement=statement,
+                                var_name=var_name,
+                            )
+                        )
+                        logging.debug(f"Added read of {var_name} in unexposed expression")
+
+                # Also process children recursively
+                for subchild in child.get_children():
+                    logging.debug(
+                        f"Processing unexposed child: {subchild.kind} {subchild.spelling}"
+                    )
+                    logging.debug(
+                        f"Unexposed child tokens: {[t.spelling for t in subchild.get_tokens()]}"
+                    )
+                    self._process_statements(subchild, info)
 
             self._process_statements(child, info)
+
+    def _process_function_call(self, node, info):
+        """Process a function call node to find variable reads in arguments and nested expressions."""
+        # Get the full statement text for logging
+        statement = "".join(t.spelling for t in node.get_tokens())
+        logging.debug(f"Processing function call: {statement}")
+        logging.debug(f"Function call node kind: {node.kind}")
+        logging.debug(f"Function call children: {[child.kind for child in node.get_children()]}")
+        logging.debug(f"Function call tokens: {[t.spelling for t in node.get_tokens()]}")
+
+        # Process all children of the function call
+        for arg in node.get_children():
+            logging.debug(f"Processing argument: {arg.kind} {arg.spelling}")
+
+            # If the argument is a direct variable reference
+            if arg.kind == CursorKind.DECL_REF_EXPR:
+                var_name = arg.spelling
+                if var_name in self.global_vars:
+                    logging.debug(f"Found global variable {var_name} in function argument")
+                    line_number = arg.location.line
+
+                    # Always add read access for variable references
+                    info.reads.add(
+                        ReadAccessInfo(
+                            line_number=line_number,
+                            statement=statement,
+                            var_name=var_name,
+                        )
+                    )
+                    logging.debug(f"Added read of {var_name} in function argument")
+
+            # If the argument is a more complex expression, process it recursively
+            elif arg.kind in [
+                CursorKind.BINARY_OPERATOR,
+                CursorKind.UNARY_OPERATOR,
+                CursorKind.CALL_EXPR,
+                CursorKind.PAREN_EXPR,
+                CursorKind.MEMBER_REF_EXPR,
+                CursorKind.UNEXPOSED_EXPR,
+            ]:
+                # For member references, we need to process their children
+                if arg.kind == CursorKind.MEMBER_REF_EXPR:
+                    for child in arg.get_children():
+                        if child.kind == CursorKind.DECL_REF_EXPR:
+                            var_name = child.spelling
+                            if var_name in self.global_vars:
+                                logging.debug(
+                                    f"Found global variable {var_name} in member reference"
+                                )
+                                line_number = child.location.line
+                                # Always add read access for variable references
+                                info.reads.add(
+                                    ReadAccessInfo(
+                                        line_number=line_number,
+                                        statement=statement,
+                                        var_name=var_name,
+                                    )
+                                )
+                                logging.debug(f"Added read of {var_name} in member reference")
+                # For unexposed expressions, we need to process their children recursively
+                elif arg.kind == CursorKind.UNEXPOSED_EXPR:
+                    for child in arg.get_children():
+                        if child.kind == CursorKind.DECL_REF_EXPR:
+                            var_name = child.spelling
+                            if var_name in self.global_vars:
+                                logging.debug(
+                                    f"Found global variable {var_name} in unexposed expression"
+                                )
+                                line_number = child.location.line
+                                # Always add read access for variable references
+                                info.reads.add(
+                                    ReadAccessInfo(
+                                        line_number=line_number,
+                                        statement=statement,
+                                        var_name=var_name,
+                                    )
+                                )
+                                logging.debug(f"Added read of {var_name} in unexposed expression")
+                        else:
+                            self._process_statements(child, info)
+                else:
+                    self._process_statements(arg, info)
+
+        # Also check for any global variables in the function call tokens
+        tokens = list(node.get_tokens())
+        for token in tokens:
+            if token.spelling in self.global_vars:
+                var_name = token.spelling
+                logging.debug(f"Found global variable {var_name} in function call tokens")
+                line_number = token.location.line
+                # Always add read access for variable references
+                info.reads.add(
+                    ReadAccessInfo(
+                        line_number=line_number,
+                        statement=statement,
+                        var_name=var_name,
+                    )
+                )
+                logging.debug(f"Added read of {var_name} in function call tokens")
 
     def _analyze_main_program(self, cursor):
         """Find and analyze all non-interrupt functions."""
@@ -233,37 +479,44 @@ class RaceConditionAnalyzer:
         """Analyze potential race conditions between interrupts and main program."""
         # Check for race conditions between main program and interrupts
         for var_name in self.global_vars:
-            main_program_accesses = [
+            main_program_accesses = {
                 a for a in self.main_program.accesses if a.var_name == var_name and not a.protected
-            ]
-            main_writes = [a for a in main_program_accesses if a.access_type == AccessType.WRITE]
+            }
+            main_writes = {a for a in main_program_accesses if a.access_type == AccessType.WRITE}
+
+            logging.debug(f"Analyzing {var_name}:")
+            logging.debug(f"  Main program accesses: {main_program_accesses}")
+            logging.debug(f"  Main program writes: {main_writes}")
+
             for isr in self.interrupts.values():
-                interrupt_accesses = [a for a in isr.accesses if a.var_name == var_name]
-                isr_writes = [a for a in interrupt_accesses if a.access_type == AccessType.WRITE]
-                if var_name in isr.vars:
-                    if (
-                        len(main_program_accesses) > 0
-                        and len(interrupt_accesses) > 0
-                        and (len(isr_writes) > 0 or len(main_writes) > 0)
-                    ):
-                        # race condition happens for the given variable in the given interrupt
-                        if len(main_writes) == 0:
-                            # only the interrupt writes to the variable
-                            self.race_conditions.append(
-                                RaceCondition(var_name, isr.name, main_program_accesses, isr_writes)
+                interrupt_accesses = {a for a in isr.accesses if a.var_name == var_name}
+                isr_writes = {a for a in interrupt_accesses if a.access_type == AccessType.WRITE}
+
+                logging.debug(f"  Interrupt {isr.name} accesses: {interrupt_accesses}")
+                logging.debug(f"  Interrupt {isr.name} writes: {isr_writes}")
+
+                # Check if this variable is accessed by both the interrupt and main program
+                if len(main_program_accesses) > 0 and len(interrupt_accesses) > 0:
+                    # If either the interrupt or main program writes to the variable, it's a race condition
+                    if len(isr_writes) > 0 or len(main_writes) > 0:
+                        logging.debug(
+                            f"Found race condition for {var_name}: "
+                            f"Main accesses: {main_program_accesses}, "
+                            f"ISR accesses: {interrupt_accesses}"
+                        )
+                        # If the interrupt writes to the variable, include all interrupt accesses
+                        # If the interrupt only reads, include only the writes (which should be empty)
+                        interrupt_race_accesses = (
+                            interrupt_accesses if len(isr_writes) > 0 else isr_writes
+                        )
+                        self.race_conditions.append(
+                            RaceCondition(
+                                var_name=var_name,
+                                interrupt_name=isr.name,
+                                main_program_accesses=main_program_accesses,
+                                interrupt_accesses=interrupt_race_accesses,
                             )
-                        elif len(isr_writes) == 0:
-                            # only the main program writes to the variable
-                            self.race_conditions.append(
-                                RaceCondition(var_name, isr.name, main_writes, interrupt_accesses)
-                            )
-                        else:
-                            # both the interrupt and the main program write to the variable
-                            self.race_conditions.append(
-                                RaceCondition(
-                                    var_name, isr.name, main_program_accesses, interrupt_accesses
-                                )
-                            )
+                        )
 
     def print_results(self):
         """Report the analysis results in a well-formatted way."""
@@ -280,17 +533,17 @@ class RaceConditionAnalyzer:
             print(f"Interrupt: {race_condition.interrupt_name}\n")
 
             print("Main Program Accesses:")
-            for access in race_condition.main_program_accesses:
+            for access in sorted(race_condition.main_program_accesses, key=lambda x: x.line_number):
                 access_type = "WRITE" if access.access_type == AccessType.WRITE else "READ"
                 print(f"  - Line {access.line_number}: {access_type} of '{access.var_name}'")
-                if access.statement:
+                if access.statement and not access.statement.isspace():
                     print(f"    Statement: {access.statement}")
 
             print("\nInterrupt Accesses:")
-            for access in race_condition.interrupt_accesses:
+            for access in sorted(race_condition.interrupt_accesses, key=lambda x: x.line_number):
                 access_type = "WRITE" if access.access_type == AccessType.WRITE else "READ"
                 print(f"  - Line {access.line_number}: {access_type} of '{access.var_name}'")
-                if access.statement:
+                if access.statement and not access.statement.isspace():
                     print(f"    Statement: {access.statement}")
 
             print("\n" + "=" * 50 + "\n")
