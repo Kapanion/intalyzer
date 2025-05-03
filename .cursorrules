@@ -1,0 +1,6 @@
+{
+    "dependencyManager": "poetry",
+    "python": {
+        "interpreter": "python3"
+    }
+} 

@@ -2,6 +2,8 @@
 ino_files_dataset/
 ino_files_dataset.zip
 temp.json
+temp/
+results/
 
 # Build artifacts
 build/
