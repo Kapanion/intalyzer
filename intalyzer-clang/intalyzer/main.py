@@ -10,6 +10,10 @@ app = typer.Typer(help="Analyze Arduino code for interrupt-related race conditio
 
 def setup_logging(verbose: int = 0):
     """Set up logging based on verbosity level."""
+    # Remove all existing handlers
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+
     if verbose == 1:
         logging.basicConfig(level=logging.INFO)
     elif verbose >= 2:
@@ -18,11 +22,14 @@ def setup_logging(verbose: int = 0):
         logging.basicConfig(level=logging.WARNING)
 
 
-def ensure_results_dir():
-    """Ensure the results directory exists."""
-    results_dir = Path("results")
-    results_dir.mkdir(exist_ok=True)
-    return results_dir
+def ensure_dir_exists(path: Path) -> Path:
+    """Ensure the directory exists, creating it if necessary."""
+    path = Path(path)
+    if path.suffix:  # If it's a file path
+        path.parent.mkdir(parents=True, exist_ok=True)
+    else:  # If it's a directory path
+        path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 @app.command()
@@ -62,6 +69,7 @@ def batch_analyze(
     Analyze multiple Arduino .ino files in a directory for race conditions.
     """
     setup_logging(verbose)
+    output = ensure_dir_exists(output)
     batch_analyzer = BatchAnalyzer(str(directory), str(output))
     batch_analyzer.run_analysis()
 
@@ -90,6 +98,10 @@ def visualize(
     Generate visualizations and reports from analysis results.
     """
     setup_logging(verbose)
+
+    # Ensure all output directories exist
+    output_dir = ensure_dir_exists(output_dir)
+    report = ensure_dir_exists(report)
 
     visualizer = Visualizer(str(json_file), dark_mode=dark_mode)
     visualizer.plot_race_condition_summary(str(output_dir))
