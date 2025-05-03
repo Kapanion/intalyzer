@@ -74,17 +74,19 @@ class Visualizer:
     def plot_race_condition_summary(self, output_file: str):
         """Create a summary plot showing race condition statistics."""
         stats = self._get_race_condition_stats()
-        
+
         # Create base filename for individual plots
         base_output = Path(output_file)
         base_name = base_output.stem
         output_dir = base_output.parent
 
         # Calculate pie chart data
-        no_race_conditions = stats["total_files"] - stats["files_with_race_conditions"] - stats["files_with_errors"]
+        no_race_conditions = (
+            stats["total_files"] - stats["files_with_race_conditions"] - stats["files_with_errors"]
+        )
         one_race_condition = 0
         two_or_more_race_conditions = 0
-        
+
         for result in self.results:
             if "error" not in result:
                 rc_count = len(result["race_conditions"])
@@ -99,7 +101,7 @@ class Visualizer:
             if "error" not in result:
                 race_conditions_per_file.append(len(result["race_conditions"]))
 
-        fig1 = plt.figure(figsize=(8, 6))
+        plt.figure(figsize=(8, 6))
         if race_conditions_per_file:
             sns.histplot(race_conditions_per_file, discrete=True)
             plt.title("Race Conditions per File", color=self.text_color)
@@ -109,14 +111,16 @@ class Visualizer:
             plt.gca().yaxis.set_major_locator(plt.MaxNLocator(integer=True))
             plt.gca().tick_params(colors=self.text_color)
             plt.tight_layout()
-            plt.savefig(output_dir / f"{base_name}_per_file.png", 
-                       facecolor="black" if self.dark_mode else "white", 
-                       bbox_inches='tight')
+            plt.savefig(
+                output_dir / f"{base_name}_per_file.png",
+                facecolor="black" if self.dark_mode else "white",
+                bbox_inches="tight",
+            )
             plt.close()
 
         # Plot 2: Distribution of race conditions per interrupt
         race_conditions_per_interrupt = list(stats["race_conditions_by_interrupt"].values())
-        fig2 = plt.figure(figsize=(8, 6))
+        plt.figure(figsize=(8, 6))
         if race_conditions_per_interrupt:
             sns.histplot(race_conditions_per_interrupt, discrete=True)
             plt.title("Race Conditions per Interrupt", color=self.text_color)
@@ -126,14 +130,16 @@ class Visualizer:
             plt.gca().yaxis.set_major_locator(plt.MaxNLocator(integer=True))
             plt.gca().tick_params(colors=self.text_color)
             plt.tight_layout()
-            plt.savefig(output_dir / f"{base_name}_per_interrupt.png", 
-                       facecolor="black" if self.dark_mode else "white", 
-                       bbox_inches='tight')
+            plt.savefig(
+                output_dir / f"{base_name}_per_interrupt.png",
+                facecolor="black" if self.dark_mode else "white",
+                bbox_inches="tight",
+            )
             plt.close()
 
         # Plot 3: Distribution of race conditions per variable
         race_conditions_per_variable = list(stats["race_conditions_by_variable"].values())
-        fig3 = plt.figure(figsize=(8, 6))
+        plt.figure(figsize=(8, 6))
         if race_conditions_per_variable:
             sns.histplot(race_conditions_per_variable, discrete=True)
             plt.title("Race Conditions per Variable", color=self.text_color)
@@ -143,25 +149,35 @@ class Visualizer:
             plt.gca().yaxis.set_major_locator(plt.MaxNLocator(integer=True))
             plt.gca().tick_params(colors=self.text_color)
             plt.tight_layout()
-            plt.savefig(output_dir / f"{base_name}_per_variable.png", 
-                       facecolor="black" if self.dark_mode else "white", 
-                       bbox_inches='tight')
+            plt.savefig(
+                output_dir / f"{base_name}_per_variable.png",
+                facecolor="black" if self.dark_mode else "white",
+                bbox_inches="tight",
+            )
             plt.close()
 
         # Plot 4: Pie chart of files by race condition count
-        fig4 = plt.figure(figsize=(8, 6))
+        plt.figure(figsize=(8, 6))
         sizes = [no_race_conditions, one_race_condition, two_or_more_race_conditions]
-        labels = ['No Race Conditions', '1 Race Condition', '≥2 Race Conditions']
-        colors = ['#2ecc71', '#f1c40f', '#e74c3c']
-        
-        plt.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', 
-                startangle=90, textprops={'color': self.text_color})
+        labels = ["No Race Conditions", "1 Race Condition", "≥2 Race Conditions"]
+        colors = ["#2ecc71", "#f1c40f", "#e74c3c"]
+
+        plt.pie(
+            sizes,
+            labels=labels,
+            colors=colors,
+            autopct="%1.1f%%",
+            startangle=90,
+            textprops={"color": self.text_color},
+        )
         plt.title("Files by Race Condition Count", color=self.text_color)
-        plt.axis('equal')
+        plt.axis("equal")
         plt.tight_layout()
-        plt.savefig(output_dir / f"{base_name}_distribution.png", 
-                   facecolor="black" if self.dark_mode else "white", 
-                   bbox_inches='tight')
+        plt.savefig(
+            output_dir / f"{base_name}_distribution.png",
+            facecolor="black" if self.dark_mode else "white",
+            bbox_inches="tight",
+        )
         plt.close()
 
     def generate_report(self, output_file: str):
