@@ -78,5 +78,6 @@ If its a `.cpp` file. Edit the `intalyzer.cpp` code to include `"main"` as an en
 clang++ -emit-llvm -S <the .cpp file>
 # run the analysis on the .cpp file
 ../../build/tools/intalyzer/intalyzer <the .ll file>
+```
 
 Both of the methods will generate a file `output.txt` containing the results of the analysis.
