@@ -4,6 +4,7 @@ ino_files_dataset.zip
 temp.json
 temp/
 results/
+arduino_interrupt_dataset/
 
 # Build artifacts
 build/

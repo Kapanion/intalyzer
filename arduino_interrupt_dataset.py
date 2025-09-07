@@ -35,8 +35,7 @@ import requests
 from dotenv import load_dotenv
 
 load_dotenv()
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
-print(GITHUB_TOKEN)
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 if not GITHUB_TOKEN:
     print("ERROR: Please set GITHUB_TOKEN environment variable.", file=sys.stderr)
     sys.exit(1)
@@ -149,22 +148,34 @@ def detect_platform(text: str) -> str:
 
 
 def contents_download(repo: str, path: str, ref: Optional[str]) -> Tuple[Optional[str], Optional[int]]:
-    """Download file via the Contents API (base64). Returns (text, size)."""
+    """Download file via the Contents API (base64). Returns (text, size).
+
+    Falls back to raw.githubusercontent.com using the provided ref if the
+    Contents API is unavailable or returns non-base64 content.
+    """
     url = CONTENTS_API.format(repo=repo, path=path)
     params = {"ref": ref} if ref else {}
     resp = robust_get(url, params=params)
-    if resp.status_code != 200:
-        return None, None
-    data = resp.json()
-    if isinstance(data, list):
-        return None, None
-    if data.get("encoding") == "base64":
+    if resp.status_code == 200:
+        data = resp.json()
+        if not isinstance(data, list) and data.get("encoding") == "base64":
+            try:
+                raw = base64.b64decode(data["content"]).decode("utf-8", errors="replace")
+            except Exception:
+                raw = None
+            else:
+                return raw, data.get("size")
+
+    # Fallback to raw if we have a plausible ref (branch/tag/commit)
+    if ref:
+        raw_url = f"https://raw.githubusercontent.com/{repo}/{ref}/{path}"
         try:
-            raw = base64.b64decode(data["content"]).decode("utf-8", errors="replace")
+            r2 = requests.get(raw_url, timeout=30)
+            if r2.status_code == 200:
+                return r2.text, len(r2.content)
         except Exception:
-            return None, None
-        return raw, data.get("size")
-    # Sometimes GitHub returns a redirect-ish HTML for large files; skip
+            pass
+
     return None, None
 
 
@@ -177,7 +188,21 @@ def search_query(q: str, page: int, per_page: int = 100) -> Dict:
     return resp.json()
 
 
-def build_dataset(out_dir: Path, max_pages: int, license_filter: bool, min_stars: int):
+def build_dataset(
+    out_dir: Path,
+    max_pages: int,
+    license_filter: bool,
+    min_stars: int,
+    limit_shards: Optional[int] = None,
+    max_items: Optional[int] = None,
+    query_override: Optional[str] = None,
+    no_content_guard: bool = False,
+    sleep_seconds: float = 1.5,
+    per_page: int = 100,
+    skip_license_lookup: bool = False,
+    debug: bool = False,
+    max_processed: Optional[int] = None,
+):
     out_code = out_dir / "code"
     out_meta = out_dir / "metadata.jsonl"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -185,12 +210,23 @@ def build_dataset(out_dir: Path, max_pages: int, license_filter: bool, min_stars
 
     seen_keys: Set[str] = set()
 
+    # Determine which queries to run
+    if query_override:
+        shards: List[str] = [query_override]
+    elif limit_shards is not None:
+        shards = QUERY_SHARDS[: max(0, limit_shards)]
+    else:
+        shards = QUERY_SHARDS
+
+    num_written = 0
+    num_processed = 0
+
     with out_meta.open("w", encoding="utf-8") as meta_f:
-        for shard_idx, query in enumerate(QUERY_SHARDS, 1):
+        for shard_idx, query in enumerate(shards, 1):
             print(f"\n[shard {shard_idx}/{len(QUERY_SHARDS)}] {query}")
             for page in range(1, max_pages + 1):
                 try:
-                    data = search_query(query, page)
+                    data = search_query(query, page, per_page=per_page)
                 except RuntimeError as e:
                     print(f"  page {page}: {e}")
                     break
@@ -201,7 +237,7 @@ def build_dataset(out_dir: Path, max_pages: int, license_filter: bool, min_stars
                     break
 
                 print(f"  page {page}: {len(items)} items")
-                for it in items:
+                for idx, it in enumerate(items, 1):
                     repo = it["repository"]["full_name"]
                     path = it["path"]
                     sha  = it.get("sha")
@@ -209,22 +245,51 @@ def build_dataset(out_dir: Path, max_pages: int, license_filter: bool, min_stars
                     if key in seen_keys:
                         continue
 
+                    if debug and idx % 5 == 0:
+                        print(f"    processing item {idx}/{len(items)}: {repo}/{path}")
+
+                    # Respect a hard cap on processed items (regardless of success)
+                    if max_processed is not None and num_processed >= max_processed:
+                        print(f"Reached max-processed={max_processed}; stopping early.")
+                        return
+
                     # Repo gating (stars / license) for quality/legal filtering
                     stargazers = it["repository"].get("stargazers_count", 0)
                     if stargazers < min_stars:
                         continue
 
-                    lic_key, lic_spdx = repo_license(repo)
-                    if license_filter and lic_key and lic_key.lower() not in PERMISSIVE_LICENSE_KEYS:
-                        continue
+                    if not skip_license_lookup:
+                        lic_key, lic_spdx = repo_license(repo)
+                        if license_filter and lic_key and lic_key.lower() not in PERMISSIVE_LICENSE_KEYS:
+                            continue
+                    else:
+                        lic_key, lic_spdx = None, None
 
-                    text, fsize = contents_download(repo, path, sha)
+                    # Prefer repository default_branch as ref; blob SHA from search may not work for Contents API
+                    default_branch = (it.get("repository") or {}).get("default_branch")
+                    text, fsize = contents_download(repo, path, default_branch)
                     if not text:
+                        if debug:
+                            print(f"    skip: failed to fetch contents for {repo}/{path} ref={default_branch}")
+                        num_processed += 1
                         continue
 
                     # Minimal interrupt presence guard (extra safety)
-                    if not any(x in text for x in ["attachInterrupt", "ISR(", "gpio_isr_handler_add", "interrupt", "digitalPinToInterrupt"]):
-                        continue
+                    if not no_content_guard:
+                        if not any(
+                            x in text
+                            for x in [
+                                "attachInterrupt",
+                                "ISR(",
+                                "gpio_isr_handler_add",
+                                "interrupt",
+                                "digitalPinToInterrupt",
+                            ]
+                        ):
+                            if debug:
+                                print(f"    skip: content guard failed for {repo}/{path}")
+                            num_processed += 1
+                            continue
 
                     platform = detect_platform(text)
 
@@ -236,6 +301,7 @@ def build_dataset(out_dir: Path, max_pages: int, license_filter: bool, min_stars
                         out_path.write_text(text, encoding="utf-8")
                     except Exception as e:
                         print(f"    write failed: {out_path.name}: {e}")
+                        num_processed += 1
                         continue
 
                     meta = {
@@ -257,10 +323,19 @@ def build_dataset(out_dir: Path, max_pages: int, license_filter: bool, min_stars
                         "has_gpio_isr_handler_add": "gpio_isr_handler_add" in text,
                     }
                     meta_f.write(json.dumps(meta, ensure_ascii=False) + "\n")
+                    if debug:
+                        print(f"    wrote: {out_path.name}")
                     seen_keys.add(key)
+                    num_written += 1
+                    num_processed += 1
+
+                    if max_items and num_written >= max_items:
+                        print(f"Reached max-items={max_items}; stopping early.")
+                        return
 
                 # Gentle pacing between pages
-                time.sleep(1.5)
+                if sleep_seconds > 0:
+                    time.sleep(sleep_seconds)
 
 
 def main():
@@ -269,10 +344,34 @@ def main():
     p.add_argument("--max-pages", type=int, default=10, help="Pages per shard (100 results/page)")
     p.add_argument("--license-filter", action="store_true", help="Keep only permissive-license repos")
     p.add_argument("--min-stars", type=int, default=0, help="Discard repos with fewer than N stars")
+    # Quick-test options
+    p.add_argument("--shards", type=int, default=None, help="Process only the first N query shards")
+    p.add_argument("--max-items", type=int, default=None, help="Stop after writing N items")
+    p.add_argument("--query", type=str, default=None, help="Override shards with a single custom query")
+    p.add_argument("--no-content-guard", action="store_true", help="Disable minimal interrupt presence guard")
+    p.add_argument("--sleep-seconds", type=float, default=1.5, help="Seconds to sleep between pages (set 0 for speed)")
+    p.add_argument("--per-page", type=int, default=100, help="Search results per page (1-100)")
+    p.add_argument("--skip-license", action="store_true", help="Skip repo license lookup to speed up")
+    p.add_argument("--debug", action="store_true", help="Print progress while iterating items")
+    p.add_argument("--max-processed", type=int, default=None, help="Stop after processing N items regardless of writes")
     args = p.parse_args()
 
     out_dir = Path(args.out)
-    build_dataset(out_dir, max_pages=args.max_pages, license_filter=args.license_filter, min_stars=args.min_stars)
+    build_dataset(
+        out_dir,
+        max_pages=args.max_pages,
+        license_filter=args.license_filter,
+        min_stars=args.min_stars,
+        limit_shards=args.shards,
+        max_items=args.max_items,
+        query_override=args.query,
+        no_content_guard=args.no_content_guard,
+        sleep_seconds=args.sleep_seconds,
+        per_page=args.per_page,
+        skip_license_lookup=args.skip_license,
+        debug=args.debug,
+        max_processed=args.max_processed,
+    )
 
     print("\nDone.")
     print(f"- Code files: {out_dir/'code'}")
